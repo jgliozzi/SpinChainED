@@ -1,3 +1,4 @@
+# Class for Exact Diagonalization Calculations
 import numpy as np
 from scipy import sparse
 import functools as ft
