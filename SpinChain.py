@@ -471,6 +471,7 @@ class SpinChain():
         return U
 
     # time evolves state by applying U more efficiently
+    # also works for non-Hermitian systems
     def timeEvolve(self, state, time):
         return sparse.linalg.expm_multiply(-1.j*time*self.Ham.tocsc(), state)
 
