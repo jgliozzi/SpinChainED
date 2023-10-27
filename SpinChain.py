@@ -281,7 +281,7 @@ class SpinChain():
         return vn_entropy if num_states > 1 else vn_entropy[0]
 
     # One dimensional (SPT and SSB) version of topological entanglement entropy
-    # S_topo (Xiao-Gang Wen definition, split chain into A, B, D, C subregions)
+    # Xiao-Gang Wen definition, split chain into A, B, D, C subregions
     # currently only works for a single state !
     # S_AB + S_BC - S_B - S_ABC
     def getStopo(self, state):
