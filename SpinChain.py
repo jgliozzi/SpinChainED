@@ -261,31 +261,34 @@ class SpinChain():
     # Entanglement entropy of region (specify as list of sites)
     # works for single state or multiple states (inputted as columns of an array)
     # von Neumann entropy by default (n=1), Rényi if n != 1
-    def getEntEntropy(self, state, region, n=1):
-        # put state into full Hilbert space
-        if len(state.shape) == 1:
-            num_states = 1
-        else:
-            num_states = state.T.shape[0]
+    # optionally return the full entanglement spectrum instead
+    def getEntEntropy(self, state, region, n=1, ent_spectrum=False):
+        # put state(s) into full Hilbert space
+        num_states = 1 if len(state.shape)==1 else state.T.shape[0]
         if self.projector != None:
             state = self.projector.T @ state
 
         # reshape to num_states x q x q x .... x q (one axis of length q per site)
-        psi = np.reshape(state.T, [num_states] + self.L * [self.q]) 
+        psi = np.reshape(state.T, [num_states] + self.L * [self.q])
+        # for backwards compatibility w/ previous versions, allow int x to refere to region [0, x]
+        if type(region) == int:
+            region = range(region)
         regionB = [k+1 for k in range(L) if k not in region] # region to trace out
         regionA = [k+1 for k in region] # region to keep
 
         # reshape into matrices separating |psi> = ∑ w_{ij} |i>_{left half} |j>_{right half}, w_{ij} ~ sqrt(|psi><psi|)
-        state_mat = np.reshape(np.transpose(psi, [0] + regionA + regionB), 
-                                (num_states, self.q**len(regionA), -1))
+        state_mat = np.reshape(np.transpose(psi, [0] + regionA + regionB), (num_states, self.q**len(regionA), -1))
         svals = np.linalg.svd(state_mat, compute_uv=False)
         
-        if n == 1:
-            entropy = -np.sum(svals**2 * np.log(svals**2 + 1e-20), axis=1) # von Neumann S
+        if ent_spectrum == True:
+            return svals**2 if num_states > 1 else (svals**2)[0]
         else:
-            entropy = np.log(np.sum(svals**(2*n), axis=1)) / (1 - n) # Renyi S_n    
+            if n == 1:
+                entropy = -np.sum(svals**2 * np.log(svals**2 + 1e-20), axis=1) # von Neumann S
+            else:
+                entropy = np.log(np.sum(svals**(2*n), axis=1)) / (1 - n) # Renyi S_n    
 
-        return entropy if num_states > 1 else entropy[0]
+            return entropy if num_states > 1 else entropy[0]
 
     # get mutual information between two regions (A and B are lists)
     # works for multiple states and optionally renyi index
@@ -294,25 +297,6 @@ class SpinChain():
         S_B = self.getEntEntropy(state, regionB, n)
         S_AB = self.getEntEntropy(state, regionA+regionB, n)
         return (S_A + S_B - S_AB)
-    
-    # entanglement spectrum of density matrix
-    def getEntSpectrum(self, state, subsyst_size):
-        # put state into full Hilbert space
-        if len(state.shape) == 1:
-            num_states = 1
-        else:
-            num_states = state.T.shape[0]
-        if self.projector != None:
-            state = self.projector.T.toarray() @ state
-        # reshape states from columns of matrix into rows if many are present
-        # reshape into matrix separating |psi> = ∑ w_{ij} |i>_{left half} |j>_{right half}
-        # first index is state index
-        state_mat = np.reshape(state.T, (num_states, self.q**subsyst_size, -1))
-        # find singular values to get Schmidt decomposition
-        # if there are many states then svd is computed for last two indices (correct)
-        svals = np.linalg.svd(state_mat, compute_uv=False)
-        # make all singular values slightly positive to take log
-        return svals**2 if num_states > 1 else (svals**2)[0]
 
     # One dimensional (SPT and SSB) version of topological entanglement entropy
     # Xiao-Gang Wen definition, split chain into A, B, D, C subregions
