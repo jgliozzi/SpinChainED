@@ -65,9 +65,8 @@ class SpinChain():
     def getHilbertDim(self):
         return self.Ham.shape[0]
 
-    # local spin list is associated with each basis element 
+    # returns array of local spin/occupation lists assoc w/ basis elements
     # (e.g., element 0 -> |00000>, element 1 -> |00001>, element 2 -> |00011>)
-    # returns array of spin lists
     # row index = basis element number, col index = site number, entry = spin
     def basis_to_occ(self):
         # much faster if we can use binary operations
@@ -77,7 +76,7 @@ class SpinChain():
             basis_arr = np.arange(2**L).reshape([-1,1])
             # make row vector of powers of two (increasing R to L)
             mask = 2**np.arange(L)[::-1]
-            # apply bitwise "and" between elements of basis_arr and mask
+            # apply bitwise AND between elements of basis_arr and mask
             # (e.g. 5 & 4 -> 101 & 100 = 100 -> 4)
             # each row is now like [5&8, 5&4, 5&2, 5&1] = [0, 4, 0, 1]
             # converting nonzero entries to 1 gives list of binary digits of 5 -> [0,1,0,0] 
@@ -95,7 +94,7 @@ class SpinChain():
                 return (basis_arr // powers_of_q % q)
             occ_list = return_answer()
         # subtract total spin to set range as (-spin, spin) instead of (0, 2*spin) 
-        return occ_list-self.spin
+        return occ_list - self.spin
 
     # returns magnetization and or dipole of all basis elements
     def mag_dip_basis_list(self, mag=True, dip=True):
@@ -154,11 +153,12 @@ class SpinChain():
 
     # e.g. op_list = [sp, sm] and site_list_list = [[0,1], [1,2], [2,3], ...]
     # make sure the site_lists are in ascending order if within chain
+    # site_lists that wrap around chain are ignored if bc = 0
     def setHamTerm(self, op_list, site_list_list, coeff=1, ignore_bc=False):
         for site_list in site_list_list:
             site_list = np.array(site_list) % self.L          
             # site in site_list that first wraps around chain
-            wrap_index = np.where(np.diff(site_list)<0)[0]
+            wrap_index = np.where(np.diff(site_list) < 0)[0]
             # keep track of boundary conditions for sites in couplings that wrap around chain
             if (wrap_index.size > 0) and (ignore_bc == False):
                 # total number of sites that wrap around the chain 
@@ -175,7 +175,7 @@ class SpinChain():
     def particleToMag(self, n):
         return (n - self.L/2)
 
-    # projector onto magnetization sector
+    # projector onto fixed magnetization sector
     # not square matrix H -> P H (P.T)
     def P_mag(self, M):
         # list of magnetizations of basis states
@@ -187,7 +187,7 @@ class SpinChain():
             P[i, indices[i]] = 1.0
         return P
 
-    # projector onto dipole sector
+    # projector onto fixed dipole sector
     # include option to define dipole moment periodically mod L (valid for PBC)
     def P_dip(self, Pdip, periodic_dip=True):
         # list of dipoles of basis states
@@ -204,7 +204,7 @@ class SpinChain():
             P[i, indices[i]] = 1.0
         return P
 
-    # projector onto spin and dipole sector
+    # projector onto fixed magnetization and dipole sector
     # include option to define dipole moment periodically mod L (valid for PBC)
     def P_mag_dip(self, M, Pdip, periodic_dip=False):
         # list of magnetizations and dipole moments of basis elements
@@ -258,9 +258,10 @@ class SpinChain():
     def getProjector(self):
         return self.projector
 
-    # entanglement entropy w/ region A = [0, x] and region B = [x, L]
+    # Entanglement entropy of region (specify as list of sites)
     # works for single state or multiple states (inputted as columns of an array)
-    def getEntEntropy(self, state, subsyst_size):
+    # von Neumann entropy by default (n=1), Rényi if n != 1
+    def getEntEntropy(self, state, region, n=1):
         # put state into full Hilbert space
         if len(state.shape) == 1:
             num_states = 1
@@ -268,103 +269,32 @@ class SpinChain():
             num_states = state.T.shape[0]
         if self.projector != None:
             state = self.projector.T @ state
-        # reshape states from columns of matrix into rows if many are present
-        # reshape into matrix separating |psi> = ∑ w_{ij} |i>_{left half} |j>_{right half}
-        # first index is state index
-        state_mat = np.reshape(state.T, (num_states, self.q**subsyst_size, -1))
-        # find singular values to get Schmidt decomposition
-        # if there are many states then svd is computed for last two indices (correct)
+
+        # reshape to num_states x q x q x .... x q (one axis of length q per site)
+        psi = np.reshape(state.T, [num_states] + self.L * [self.q]) 
+        regionB = [k+1 for k in range(L) if k not in region] # region to trace out
+        regionA = [k+1 for k in region] # region to keep
+
+        # reshape into matrices separating |psi> = ∑ w_{ij} |i>_{left half} |j>_{right half}, w_{ij} ~ sqrt(|psi><psi|)
+        state_mat = np.reshape(np.transpose(psi, [0] + regionA + regionB), 
+                                (num_states, self.q**len(regionA), -1))
         svals = np.linalg.svd(state_mat, compute_uv=False)
-        # make all singular values slightly positive to take log
-        svals += 1e-20
-        vn_entropy = -np.sum(svals**2 * np.log(svals**2), axis=1)
         
-        return vn_entropy if num_states > 1 else vn_entropy[0]
-
-    # One dimensional (SPT and SSB) version of topological entanglement entropy
-    # Xiao-Gang Wen definition, split chain into A, B, D, C subregions
-    # currently only works for a single state !
-    # S_AB + S_BC - S_B - S_ABC
-    def getStopo(self, state):
-        # put state into full Hilbert space before reshaping into tensor product structure
-        q, L = self.q, self.L
-        A, B, D, C= [*range(0, L//4)], [*range(L//4, L//2)], [*range(L//2, 3*L//4)], [*range(3*L//4, L)]
-        if self.projector != None:
-            state = self.projector.T.toarray() @ state
-        psi = np.reshape(state, L*[q])
-        # S_AB
-        psi_block = np.reshape(psi, (2**(len(A)+len(B)), -1))
-        svals = np.linalg.svd(psi_block, compute_uv=False)
-        svals_pos = svals[svals > 1e-20]
-        S_AB = -np.sum(svals_pos**2 * np.log(svals_pos**2))
-        # S_BC
-        psi_block = np.reshape(np.transpose(psi, (B + C) + A + D), (2**(len(B)+len(C)), -1))
-        svals = np.linalg.svd(psi_block, compute_uv=False)
-        svals_pos = svals[svals > 1e-20]
-        S_BC = -np.sum(svals_pos**2 * np.log(svals_pos**2))
-        # S_B
-        psi_block = np.reshape(np.transpose(psi, (B) + A + D + C), (2**len(B), -1))
-        svals = np.linalg.svd(psi_block, compute_uv=False)
-        svals_pos = svals[svals > 1e-20]
-        S_B = -np.sum(svals_pos**2 * np.log(svals_pos**2))
-        # S_ABC
-        psi_block = np.reshape(np.transpose(psi, (A + B + C) + D), (2**(len(A)+len(B)+len(C)), -1))
-        svals = np.linalg.svd(psi_block, compute_uv=False)
-        svals_pos = svals[svals > 1e-20]
-        S_ABC = -np.sum(svals_pos**2 * np.log(svals_pos**2))
-        # Mutual information between two sites
-        return (S_AB + S_BC - S_B - S_ABC)
-
-    # Rényi entanglement entropy w/ region A = [0, x] and region B = [x, L]
-    def getRenyi(self, state, subsyst_size, alpha):
-        # put state into full Hilbert space
-        if len(state.shape) == 1:
-            num_states = 1
+        if n == 1:
+            entropy = -np.sum(svals**2 * np.log(svals**2 + 1e-20), axis=1) # von Neumann S
         else:
-            num_states = state.T.shape[0]
-        if self.projector != None:
-            state = self.projector.T.toarray() @ state
-        # reshape states from columns of matrix into rows if many are present
-        # reshape into matrix separating |psi> = ∑ w_{ij} |i>_{left half} |j>_{right half}
-        # first index is state index
-        state_mat = np.reshape(state.T, (num_states, self.q**subsyst_size, -1))
-        # find singular values to get Schmidt decomposition
-        # if there are many states then svd is computed for last two indices (correct)
-        svals = np.linalg.svd(state_mat, compute_uv=False)
-        # make all singular values slightly positive to take log
-        svals += 1e-20
-        renyi_entropy = np.log(np.sum(svals**(2*alpha), axis=1))/(1-alpha)
-        
-        return renyi_entropy if num_states > 1 else renyi_entropy[0]
+            entropy = np.log(np.sum(svals**(2*n), axis=1)) / (1 - n) # Renyi S_n    
 
+        return entropy if num_states > 1 else entropy[0]
 
-    # mutual information between two sites
-    # currently only works for a single state !
-    def getMutualInfo(self, state, i, j):
-        # put state into full Hilbert space before reshaping into tensor product structure
-        q, L = self.q, self.L
-        if self.projector != None:
-            state = self.projector.T.toarray() @ state
-        psi = np.reshape(state, L*[q])
-        other_index_list = [k for k in range(L) if k not in [i,j]]
-        # S_i
-        psi_block = np.reshape(np.transpose(psi,[i,j]+other_index_list),(q, q**(L-1)))
-        svals = np.linalg.svd(psi_block, compute_uv=False)
-        svals_pos = svals[svals > 1e-20]
-        Si = -np.sum(svals_pos**2 * np.log(svals_pos**2))
-        # S_j
-        psi_block = np.reshape(np.transpose(psi,[j,i]+other_index_list),(q, q**(L-1)))
-        svals = np.linalg.svd(psi_block, compute_uv=False)
-        svals_pos = svals[svals > 1e-20]
-        Sj = -np.sum(svals_pos**2 * np.log(svals_pos**2))
-        # S_ij
-        psi_block = np.reshape(np.transpose(psi,[i,j]+other_index_list),(q**2, q**(L-2)))
-        svals = np.linalg.svd(psi_block, compute_uv=False)
-        svals_pos = svals[svals > 1e-20]
-        Sij = -np.sum(svals_pos**2 * np.log(svals_pos**2))
-        # Mutual information between two sites
-        return (Si + Sj  - Sij)
-
+    # get mutual information between two regions (A and B are lists)
+    # works for multiple states and optionally renyi index
+    def getMutualInfo(self, state, regionA, regionB, n=1):
+        S_A = self.getEntEntropy(state, regionA, n)
+        S_B = self.getEntEntropy(state, regionB, n)
+        S_AB = self.getEntEntropy(state, regionA+regionB, n)
+        return (S_A + S_B - S_AB)
+    
     # entanglement spectrum of density matrix
     def getEntSpectrum(self, state, subsyst_size):
         # put state into full Hilbert space
@@ -383,6 +313,21 @@ class SpinChain():
         svals = np.linalg.svd(state_mat, compute_uv=False)
         # make all singular values slightly positive to take log
         return svals**2 if num_states > 1 else (svals**2)[0]
+
+    # One dimensional (SPT and SSB) version of topological entanglement entropy
+    # Xiao-Gang Wen definition, split chain into A, B, D, C subregions
+    # currently only works for a single state !
+    # S_AB + S_BC - S_B - S_ABC
+    def getStopo(self, state):
+        L = self.L
+        A, B, D, C = [*range(0, L//4)], [*range(L//4, L//2)], [*range(L//2, 3*L//4)], [*range(3*L//4, L)]
+        
+        S_AB = self.getEntEntropy(state, A+B)
+        S_BC = self.getEntEntropy(state, B+C)
+        S_B = self.getEntEntropy(state, B)
+        S_ABC = self.getEntEntropy(state, A+B+C)
+
+        return (S_AB + S_BC - S_B - S_ABC)
 
     # gives IPR of one vector or of a matrix of column vectors
     # if vector is in sub-sector it gives IPR within that sub-sector
@@ -418,12 +363,12 @@ class SpinChain():
         if self.Ham.shape[0] < 2**10:
             vals, vecs = np.linalg.eigh(self.Ham.toarray())
         else:
-            vals, vecs = sparse.linalg.eigsh(self.Ham, k=6, which='SA')
+            vals, vecs = sparse.linalg.eigsh(self.Ham, k=1, which='SA')
         vals, vecs = vals[np.argsort(vals)], vecs[:, np.argsort(vals)] 
 
         return vals[0], vecs[:,0]
 
-    # returns number of krylov spaces and a list of their respective sizes
+    # returns number of krylov spaces of Hamiltonian and a list of their respective sizes
     # optionally returns indices of all basis elements in each subspace (list of lists)
     # also works if we are within an overall symmetry sector
     def getKrylov(self, states=False):
@@ -473,7 +418,54 @@ class SpinChain():
     # time evolves state by applying U more efficiently
     # also works for non-Hermitian systems
     def timeEvolve(self, state, time):
-        return sparse.linalg.expm_multiply(-1.j*time*self.Ham.tocsc(), state)
+        result = sparse.linalg.expm_multiply(-1.j*time*self.Ham.tocsc(), state)
+        return result/np.linalg.norm(result)
+    
+    # Chebyshev approximation to time evolution at order 'order'
+    # more controlled for long times, only works for Hermitian H
+    # import E_min, E_max, and H_tilde (rescaled hamiltonian) if possible
+    def timeEvolveCheb(self, state, time, order, E_range=None, H_tilde=None):
+        # import E_min and E_max of Hamiltonian if known, recalculate otherwise
+        if E_range == None:
+            E_min = sparse.linalg.eigsh(self.Ham, k=1, which='SA', return_eigenvectors=False)[0]
+            E_max = sparse.linalg.eigsh(self.Ham, k=1, which='LA', return_eigenvectors=False)[0]
+        else:
+            E_min, E_max = E_range
+        
+        # rescaling factors
+        eps = 1e-4
+        a = (E_max - E_min)/(2 - eps)
+        b = (E_max + E_min)/2
+
+        # rescaled Hamiltonian to have spectrum in [-1, 1] (import if possible)
+        if H_tilde == None:
+            H_tilde = (self.Ham - b * sparse.eye(self.Ham.shape)) / a          
+        # linear operator allows for faster matrix vector multiplication    
+        H_tilde_op = sparse.linalg.LinearOperator((self.Ham.shape, self.Ham.shape), 
+                                                    matvec=lambda x: H_tilde @ x)
+
+        # set coefficients of Chebyshev expansion with bessel functions
+        coeffs = 2 * (-1j)**np.arange(cheb_order) * special.jv(np.arange(cheb_order), a*t)
+        coeffs[0] /= 2 # first coefficient has extra factor of 1/2
+        
+        # first two chebyshev states
+        m0 = psi_init
+        m1 = H_tilde_op.matvec(m0) 
+
+        # recursively create more chebyshev states and add w/ coeffs to get result
+        result = coeffs[0]*m0 + coeffs[1]*m1
+        for n in range(2, cheb_order):
+            # define next vector recursively based on previous two
+            m_next = 2 * H_tilde_op.matvec(m1) - m0
+            # add to series approximation
+            result += coeffs[n] * m_next
+            # update previous two vectors in recursive series
+            m0, m1 = m1, m_next
+
+        # multiply result by time dependent phase
+        result *= np.exp(-1.j * (E_min + a * (1-eps/2)) * t)
+
+        return result/np.linalg.norm(result)
 
 
 
