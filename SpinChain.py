@@ -257,7 +257,7 @@ class SpinChain():
         # for backwards compatibility w/ previous versions, allow int x to refere to region [0, x]
         if type(region) == int:
             region = range(region)
-        regionB = [k+1 for k in range(L) if k not in region] # region to trace out
+        regionB = [k+1 for k in range(self.L) if k not in region] # region to trace out
         regionA = [k+1 for k in region] # region to keep
 
         # reshape into matrices separating |psi> = ∑ w_{ij} |i>_{left half} |j>_{right half}, w_{ij} ~ sqrt(|psi><psi|)
