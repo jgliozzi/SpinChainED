@@ -260,7 +260,7 @@ class SpinChain():
         regionB = [k+1 for k in range(self.L) if k not in region] # region to trace out
         regionA = [k+1 for k in region] # region to keep
 
-        # reshape into matrices separating |psi> = ∑ w_{ij} |i>_{left half} |j>_{right half}, w_{ij} ~ sqrt(|psi><psi|)
+        # reshape into matrices separating |psi> = ∑ w_{ij} |i>_{region A} |j>_{region B}, w_{ij} ~ sqrt(|psi><psi|)
         state_mat = np.reshape(np.transpose(psi, [0] + regionA + regionB), (num_states, self.q**len(regionA), -1))
         svals = np.linalg.svd(state_mat, compute_uv=False)
         
@@ -296,6 +296,27 @@ class SpinChain():
         S_ABC = self.getEntEntropy(state, A+B+C)
 
         return (S_AB + S_BC - S_B - S_ABC)
+
+    # Reduced density matrix: only works for a single state
+    def getReducedDensityMat(self, state, region):
+        # put state(s) into full Hilbert space
+        if self.projector is not None:
+            state = self.projector.T @ state
+
+        # reshape to q x q x .... x q (one axis of length q (onsite hilbert space dimension) per site)
+        psi = np.reshape(state.T, self.L * [self.q])
+        # for backwards compatibility w/ previous versions, allow int x to refer to region [0, x]
+        if type(region) == int:
+            region = range(region)
+        regionB = [k for k in range(self.L) if k not in region] # region to trace out
+        regionA = [k for k in region] # region to keep
+
+        # reshape into matrices separating |psi> = ∑ w_{ij} |i>_{region A} |j>_{region B}, w_{ij} ~ sqrt(|psi><psi|)
+        state_mat = np.reshape(np.transpose(psi, regionA + regionB), (self.q**len(regionA), -1))
+        # use this Schmidt decomposition to construct reduced density matrix in occupation basis
+        rho = state_mat @ state_mat.conj().T
+
+        return rho
 
     # gives IPR of one vector or of a matrix of column vectors
     # if vector is in sub-sector it gives IPR within that sub-sector
@@ -518,5 +539,8 @@ class SpinChain():
             coeff_mat = np.einsum('a,b->ab', c.conj(), c) 
             op_krylov = krylov_states.T.conj() @ op_full @ krylov_states 
             return np.sum(coeff_mat * op_krylov).real
+
+           
+
 
         
