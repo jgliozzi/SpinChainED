@@ -17,9 +17,9 @@ class SpinChain():
         self.Ham = sparse.bsr_array((self.q**L, self.q**L), dtype=complex) # hamiltonian
         s0 = np.eye(self.q) 
         sz = np.diag(np.arange(-spin, spin+1, 1.0)) 
-        sp = np.diag([np.sqrt(spin*(spin+1) - m*(m+1)) 
-                    for m in np.arange(-spin, spin, 1.0)], k=1) 
         sm = np.diag([np.sqrt(spin*(spin+1) - m*(m+1)) 
+                    for m in np.arange(-spin, spin, 1.0)], k=1) 
+        sp = np.diag([np.sqrt(spin*(spin+1) - m*(m+1)) 
                     for m in np.arange(-spin, spin, 1.0)], k=-1) 
         self.spin_mat_list = [s0, sz, sp, sm] # spin matrices
 
