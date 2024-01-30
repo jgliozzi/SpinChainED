@@ -119,6 +119,21 @@ class SpinChain():
         # take tensor product of resulting matrices
         return coeff*tp(mat_list)
 
+    # apply n-site operator (in full matrix form) directly to state, return new state
+    # faster than op_at_sites because it doesn't construct global operator
+    # op is full 2^len(site_list) x 2^len(site_list) operator
+    def apply_nsite_op(self, op, site_list, state):
+        if op.shape[0] != self.q**len(site_list):
+            raise Exception("operator size does not match number of sites")
+        
+        sites_ignored = [k for k in range(self.L) if k not in site_list]
+        # manipulate state to act only on sites in question with operator
+        state = np.reshape(state,  self.L * [self.q]) # expand state as q^L tensor coefficients
+        state = np.reshape(np.transpose(state, site_list + sites_ignored), [self.q**len(site_list)] + len(sites_ignored) * [self.q]) # move sites on which operator acts to front and reshape to match operator
+        state = np.reshape(np.einsum('ab, b...-> a...', op, state), self.L * [self.q]) # act with operator and return to tensor coefficients 
+        state = np.transpose(state, np.argsort(site_list + sites_ignored)).flatten() # transpose back to original computational basis and flatten
+        return state
+
     # return global magnetization operator
     def getMagOp(self):
         sz = self.spin_mat_list[1]
